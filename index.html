@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport"
+ content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Vienna FlightWall</title>
+
+<link rel="stylesheet"
+ href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #080e16;
+  color: #e9f5ff;
+  font-family: Arial, sans-serif;
+  overflow: hidden;
+}
+
+header {
+  height: 55px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  background: #101c29;
+  border-bottom: 1px solid #24394b;
+}
+
+h2 {
+  font-size: 17px;
+  margin: 0;
+  letter-spacing: 2px;
+}
+
+#status {
+  color: #5be0a1;
+  font-size: 11px;
+}
+
+#map {
+  height: calc(100dvh - 55px);
+  width: 100%;
+  background: #101923;
+}
+
+.plane {
+  color: #62d9ff;
+  font-size: 24px;
+  text-shadow: 0 0 9px #36bfff;
+  display: inline-block;
+}
+
+.leaflet-popup-content-wrapper {
+  background: #142433;
+  color: white;
+  border: 1px solid #31516a;
+}
+
+.leaflet-popup-tip {
+  background: #142433;
+}
+
+.info {
+  font-size: 13px;
+  line-height: 1.8;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h2>✈ VIENNA FLIGHTWALL</h2>
+  <span id="status">● VERBINDE...</span>
+</header>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+const LAT = 48.2082;
+const LON = 16.3738;
+const RADIUS_NM = 27; // ungefähr 50 km
+
+const map = L.map('map', {
+  zoomControl: false
+}).setView([LAT, LON], 9);
+
+L.tileLayer(
+  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  {
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    subdomains: 'abcd',
+    maxZoom: 19
+  }
+).addTo(map);
+
+L.control.zoom({position:'bottomright'}).addTo(map);
+
+const markers = {};
+
+function formatAltitude(value) {
+  if (typeof value !== 'number') return '–';
+  return Math.round(value).toLocaleString('de-DE') + ' ft';
+}
+
+function formatSpeed(value) {
+  if (typeof value !== 'number') return '–';
+  return Math.round(value * 1.852) + ' km/h';
+}
+
+async function updateFlights() {
+  try {
+    const url =
+      `https://api.adsb.lol/v2/lat/${LAT}/lon/${LON}/dist/${RADIUS_NM}`;
+
+    const response = await fetch(url);
+
+    if (!response.ok) throw new Error('API Fehler');
+
+    const data = await response.json();
+    const aircraft = data.ac || [];
+
+    const visible = new Set();
+
+    aircraft.forEach(plane => {
+      if (plane.lat == null || plane.lon == null) return;
+
+      visible.add(plane.hex);
+
+      const heading = plane.track || 0;
+      const callsign = (plane.flight || plane.hex || 'Unbekannt').trim();
+
+      const html = `
+        <div class="info">
+          <b>✈ ${callsign}</b><br>
+          Kennung: ${plane.hex || '–'}<br>
+          Höhe: ${formatAltitude(plane.alt_baro)}<br>
+          Geschwindigkeit: ${formatSpeed(plane.gs)}<br>
+          Richtung: ${Math.round(heading)}°<br>
+          Steigrate: ${plane.baro_rate ?? '–'} ft/min
+        </div>
+      `;
+
+      if (markers[plane.hex]) {
+        markers[plane.hex].setLatLng([plane.lat, plane.lon]);
+        markers[plane.hex].setIcon(
+          makeIcon(heading)
+        );
+        markers[plane.hex].getPopup().setContent(html);
+      } else {
+        markers[plane.hex] = L.marker(
+          [plane.lat, plane.lon],
+          {icon: makeIcon(heading)}
+        ).addTo(map).bindPopup(html);
+      }
+    });
+
+    Object.keys(markers).forEach(hex => {
+      if (!visible.has(hex)) {
+        map.removeLayer(markers[hex]);
+        delete markers[hex];
+      }
+    });
+
+    document.getElementById('status').textContent =
+      `● LIVE · ${visible.size} FLUGZEUGE`;
+
+  } catch (error) {
+    document.getElementById('status').textContent =
+      '● DATEN NICHT ERREICHBAR';
+    console.error(error);
+  }
+}
+
+function makeIcon(heading) {
+  return L.divIcon({
+    className: '',
+    html: `<span class="plane"
+      style="transform:rotate(${heading}deg)">✈</span>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14]
+  });
+}
+
+updateFlights();
+setInterval(updateFlights, 15000);
+</script>
+
+</body>
+</html>
